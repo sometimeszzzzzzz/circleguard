@@ -1,21 +1,18 @@
-from pathlib import Path
 import sys
-import os
+from pathlib import Path
 from datetime import datetime, timedelta
 
-from circleguard import Mod
-from packaging import version
 import requests
 from requests import RequestException
+from packaging import version
 from PyQt5.QtWidgets import QLayout
+from circleguard import Mod
 
-# placeholder imports to have all imports at the top of the file. Imported for
-# real farther below
-#from settings import get_setting, set_setting
-#from version import __version__
 
 # placed above local imports to avoid circular import errors
 ROOT_PATH = Path(__file__).parent.absolute()
+
+
 def resource_path(str_path):
     """
     Returns a Path representing where to look for resource files for the program,
@@ -29,6 +26,7 @@ def resource_path(str_path):
     return ROOT_PATH / Path(str_path)
 
 
+# pylint: disable=wrong-import-position
 from settings import get_setting, set_setting
 from version import __version__
 
@@ -54,13 +52,14 @@ def get_idle_setting_str():
     current_version = version.parse(__version__)
     if current_version < version.parse(get_setting("latest_version")):
         return "<a href=\'https://circleguard.dev/download'>Update available!</a>"
-    else:
-        return "Idle"
+    return "Idle"
+
 
 class InvalidModException(Exception):
     """
     We were asked to parse an invalid mod string.
     """
+
 
 def parse_mod_string(mod_string):
     """
@@ -103,7 +102,7 @@ def clear_layout(layout):
             child.widget().deleteLater()
 
 
-class Run():
+class Run:
     """
     Represents a click of the Run button on the Main tab, which can contain
     multiple Checks, each of which contains a set of Loadables.
@@ -114,7 +113,7 @@ class Run():
         self.run_id = run_id
         self.event = event
 
-class Player():
+class Player:
     def __init__(self, data, replay, username, mods, buffer, cursor_color, pos):
         self.data = data
         self.replay = replay

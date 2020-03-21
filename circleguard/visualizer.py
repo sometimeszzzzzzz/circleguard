@@ -1,6 +1,7 @@
 import threading
+import math
+import numpy as np
 
-from circleguard import Mod, Keys
 from slider import Beatmap, Library
 from slider.beatmap import Circle, Slider, Spinner
 from slider.curve import Bezier, MultiBezier
@@ -8,14 +9,12 @@ from slider.mod import circle_radius, od_to_ms
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF
 from PyQt5.QtWidgets import QWidget, QFrame, QMainWindow, QGridLayout, QSlider, QPushButton, QShortcut, QLabel
 from PyQt5.QtGui import QColor, QPainterPath, QPainter, QPen, QKeySequence, QIcon, QPalette, QBrush
+from circleguard import Mod, Keys
 
 import clock
 from utils import resource_path, Player
 from settings import get_setting, set_setting
 
-import math
-
-import numpy as np
 
 PREVIOUS_ERRSTATE = np.seterr('raise')
 
@@ -34,8 +33,10 @@ SCREEN_HEIGHT = 480+96
 class _Renderer(QFrame):
     update_signal = pyqtSignal(int)
 
-    def __init__(self, replays=[], beatmap_id=None, beatmap_path=None, parent=None, speed=1):
+    def __init__(self, replays=None, beatmap_id=None, beatmap_path=None, parent=None, speed=1):
         super(_Renderer, self).__init__(parent)
+        if replays is None:
+            replays = []
         self.setMinimumSize(SCREEN_WIDTH, SCREEN_HEIGHT)
         self.painter = QPainter()
 
@@ -133,7 +134,7 @@ class _Renderer(QFrame):
         current_time = self.clock.get_time()
         # resets visualizer if at end
         if current_time > self.playback_len or current_time < 0:
-            self.reset(end=True if self.clock.current_speed < 0 else False)
+            self.reset(end=self.clock.current_speed < 0)
 
         for player in self.players:
             player.pos = np.searchsorted(player.data.T[0], current_time, "right")
@@ -154,7 +155,7 @@ class _Renderer(QFrame):
         while not found_all:
             current_hitobj = self.beatmap.hit_objects[index]
             hit_t = current_hitobj.time.total_seconds() * 1000
-            if isinstance(current_hitobj, Slider) or isinstance(current_hitobj, Spinner):
+            if isinstance(current_hitobj, (Slider, Spinner)):
                 hit_end = self.get_hit_endtime(current_hitobj) + (self.fade_in)
             else:
                 hit_end = hit_t + self.hitwindow + (self.fade_in)
@@ -187,11 +188,10 @@ class _Renderer(QFrame):
                 self.draw_loading_screen()
                 self.painter.end()
                 return
-            else:
-                self.is_loading = False
-                self.clock.reset()
-                self.painter.end()
-                return
+            self.is_loading = False
+            self.clock.reset()
+            self.painter.end()
+            return
         # debug stuff
         self.frame_times.insert(0, self.frame_time_clock.get_time() - self.last_frame)
         self.frame_times = self.frame_times[:120]
@@ -224,7 +224,7 @@ class _Renderer(QFrame):
         self.painter.setPen(_pen)
         for i in range(len(player.buffer) - 1):
             self.draw_line(i * alpha_step, (player.buffer[i][1], player.buffer[i][2]),
-                                           (player.buffer[i + 1][1], player.buffer[i + 1][2]))
+                           (player.buffer[i + 1][1], player.buffer[i + 1][2]))
         _pen.setWidth(WIDTH_POINT)
         self.painter.setPen(_pen)
         for i in range(len(player.buffer) - 1):
@@ -290,7 +290,7 @@ class _Renderer(QFrame):
         self.painter.setPen(_pen)
         ref_path = QPainterPath()
         ref_path.moveTo(SCREEN_WIDTH - 360, SCREEN_HEIGHT - 17)
-        ref_path.lineTo(SCREEN_WIDTH,  SCREEN_HEIGHT - 17)
+        ref_path.lineTo(SCREEN_WIDTH, SCREEN_HEIGHT - 17)
         ref_path.moveTo(SCREEN_WIDTH - 360, SCREEN_HEIGHT - 33)
         ref_path.lineTo(SCREEN_WIDTH, SCREEN_HEIGHT - 33)
         ref_path.moveTo(SCREEN_WIDTH - 360, SCREEN_HEIGHT - 67)
@@ -303,7 +303,7 @@ class _Renderer(QFrame):
         frame_path.moveTo(x_offset, max(SCREEN_HEIGHT - 100, SCREEN_HEIGHT - (self.frame_times[0])))
         for time in self.frame_times:
             x_offset -= 3
-            frame_path.lineTo(x_offset, max(SCREEN_HEIGHT - 100, SCREEN_HEIGHT - (time)))
+            frame_path.lineTo(x_offset, max(SCREEN_HEIGHT - 100, SCREEN_HEIGHT - time))
         self.painter.drawPath(frame_path)
         # draw fps & ms
         ms = self.frame_times[0]
@@ -388,7 +388,8 @@ class _Renderer(QFrame):
             Hitobj hitobj: A Hitobject.
         """
         current_time = self.clock.get_time()
-        if self.get_hit_endtime(hitobj) - current_time < 0: return
+        if self.get_hit_endtime(hitobj) - current_time < 0:
+            return
         big_circle = (384 / 2)
         hitcircle_alpha = 255 - ((self.get_hit_time(hitobj) - current_time - (self.preempt - self.fade_in)) / self.fade_in) * 255
         fade_out = max(0, ((current_time - self.get_hit_endtime(hitobj)) / self.hitwindow * 0.5))
@@ -415,7 +416,8 @@ class _Renderer(QFrame):
             Hitobj hitobj: A Hitobject.
         """
         current_time = self.clock.get_time()
-        if self.get_hit_time(hitobj) - current_time < 0: return
+        if self.get_hit_time(hitobj) - current_time < 0:
+            return
         hitcircle_alpha = 255 - ((self.get_hit_time(hitobj) - current_time - (self.preempt - self.fade_in)) / self.fade_in) * 255
         hitcircle_alpha = hitcircle_alpha if hitcircle_alpha < 255 else 255
         approachcircle_scale = max(((self.get_hit_time(hitobj) - current_time) / self.preempt) * 3 + 1, 1)
@@ -577,7 +579,7 @@ class _Renderer(QFrame):
 
 
 class _Interface(QWidget):
-    def __init__(self, replays=[], beatmap_id=None, beatmap_path=None):
+    def __init__(self, replays=None, beatmap_id=None, beatmap_path=None):
         super(_Interface, self).__init__()
         speed = get_setting("default_speed")
         self.speed_options = get_setting("speed_options")
@@ -702,7 +704,7 @@ class _Interface(QWidget):
 
 
 class VisualizerWindow(QMainWindow):
-    def __init__(self, replays=[], beatmap_id=None, beatmap_path=None):
+    def __init__(self, replays=None, beatmap_id=None, beatmap_path=None):
         super(VisualizerWindow, self).__init__()
         self.setWindowTitle("Visualizer")
         self.setWindowIcon(QIcon(str(resource_path("resources/logo.ico"))))

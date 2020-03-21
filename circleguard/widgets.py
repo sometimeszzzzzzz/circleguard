@@ -1,21 +1,20 @@
-import sys
 import ntpath
 from pathlib import Path
 from functools import partial
 import json
 
 from PyQt5.QtWidgets import (QWidget, QFrame, QGridLayout, QLabel, QLineEdit, QMessageBox,
-                             QSpacerItem, QSizePolicy, QSlider, QSpinBox, QFrame,
-                             QDoubleSpinBox, QFileDialog, QPushButton, QCheckBox, QComboBox, QVBoxLayout)
+                             QSpacerItem, QSizePolicy, QSlider, QSpinBox, QDoubleSpinBox, QFileDialog,
+                             QPushButton, QCheckBox, QComboBox, QVBoxLayout)
 from PyQt5.QtGui import QRegExpValidator, QIcon, QDrag
-from PyQt5.QtCore import QRegExp, Qt, QDir, QCoreApplication, pyqtSignal, QPoint, QMimeData
+from PyQt5.QtCore import QRegExp, Qt, QCoreApplication, pyqtSignal, QPoint, QMimeData
 
 from settings import get_setting, reset_defaults, LinkableSetting, set_setting
 from visualizer import VisualizerWindow
 from utils import resource_path, delete_widget
 
 SPACER = QSpacerItem(100, 0, QSizePolicy.Maximum, QSizePolicy.Minimum)
-
+WINDOW = None
 
 def set_event_window(window):
     """
@@ -41,7 +40,7 @@ class LineEdit(QLineEdit):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key == Qt.Key_Left or key == Qt.Key_Right:
+        if key in (Qt.Key_Left, Qt.Key_Right):
             QCoreApplication.sendEvent(WINDOW, event)
         super().keyPressEvent(event)
 
@@ -94,7 +93,7 @@ class SpinBox(QSpinBox):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key == Qt.Key_Left or key == Qt.Key_Right:
+        if key in (Qt.Key_Left, Qt.Key_Right):
             QCoreApplication.sendEvent(WINDOW, event)
         super().keyPressEvent(event)
 
@@ -107,7 +106,7 @@ class DoubleSpinBox(QDoubleSpinBox):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key == Qt.Key_Left or key == Qt.Key_Right:
+        if key in (Qt.Key_Left, Qt.Key_Right):
             QCoreApplication.sendEvent(WINDOW, event)
         super().keyPressEvent(event)
 
@@ -253,8 +252,8 @@ class CenteredWidget(QWidget):
         super().__init__()
         self.layout = QGridLayout()
         self.layout.setAlignment(Qt.AlignCenter)
-        self.layout.setContentsMargins(0,0,0,0)
-        self.setContentsMargins(0,0,0,0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.setContentsMargins(0, 0, 0, 0)
         self.layout.addWidget(widget)
         self.setLayout(self.layout)
 
@@ -886,7 +885,7 @@ class FolderChooser(QFrame):
 
     def update_dir(self, path):
         self.path = path if path != "" else self.path
-        self.changed = True if self.path != self.default_path else False
+        self.changed = self.path != self.default_path
         if self.display_path:
             if self.multiple_files:
                 label = str(Path(self.path).parent)

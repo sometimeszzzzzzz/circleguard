@@ -1,18 +1,13 @@
-import re
 import os
 from pathlib import Path
-from datetime import datetime, timedelta
 import abc
 import json
-
-from PyQt5.QtCore import QSettings, QStandardPaths, pyqtSignal, QObject
-from packaging import version
 # it's tempting to use QSettings builtin ini file support instead of configparser,
 # but that doesn't let us write comments, which is rather important to explain
 # what attributes are available through string formatting.
 from configparser import ConfigParser
-
-from utils import resource_path
+from PyQt5.QtCore import QSettings, QStandardPaths
+from packaging import version
 from version import __version__
 
 
@@ -66,13 +61,13 @@ COMMENTS = {
     "Locations": {
         "section": "The paths to various file or directories used by Circleguard.",
         "cache_dir": "Where we store caches for circlecore (replays) and slider (beatmaps).\n"
-                "If this location doesn't exist, it will be created, including any nonexistent directories in the path",
+                     "If this location doesn't exist, it will be created, including any nonexistent directories in the path",
         "config_location": "Where the circelguard.cfg file (this very file) resides",
         "log_dir": "Where to write logs. We currently use a single log file (circleguard.log), but the setting is a directory to allow for future expansion"
     },
     "Thresholds": {
         "section": "Thresholds for when to store results and when to display results for various types of cheats.\n"
-                "Although possible to set _display settings lower than their respective _cheat setting, it is not advised.",
+                   "Although possible to set _display settings lower than their respective _cheat setting, it is not advised.",
         "steal_max_sim": "The max similarity for a replay stealing comparison to be counted as cheated",
         "steal_max_sim_display": "The max similarity for a replay stealing comparison to be printed to the terminal",
         "relax_max_ur": "The max ur for a replay to be counted as cheated",
@@ -90,17 +85,17 @@ COMMENTS = {
     "Logs": {
         "log_save": "Whether to save logs to a file (whose path is defined by Locations/log_dir)",
         "log_mode": "All logs with a severity level at or higher than this value will be outputted.\n"
-                "Critical: 0\n"
-                "Error: 1\n"
-                "Warning: 2\n"
-                "Info: 3\n"
-                "Debug: 4\n"
-                "Trace: 5",
+                    "Critical: 0\n"
+                    "Error: 1\n"
+                    "Warning: 2\n"
+                    "Info: 3\n"
+                    "Debug: 4\n"
+                    "Trace: 5",
         "log_output": "Where to output logs. This setting has no relation to log_save, so if log_output is 0 and log_save is True, logs will still be written to the log file at the level defined by log_mode.\n"
-                "Nowhere: 0\n"
-                "Terminal: 1\n"
-                "Debug Window: 2\n"
-                "Terminal and Debug Window: 3",
+                      "Nowhere: 0\n"
+                      "Terminal: 1\n"
+                      "Debug Window: 2\n"
+                      "Terminal and Debug Window: 3",
         "log_format": "What format to use for logging"
     },
     "Caching": {
@@ -282,8 +277,7 @@ CHANGED = {
 }
 
 
-
-class LinkableSetting():
+class LinkableSetting:
     """
     XXX IMPLEMENTATION NOTE FOR SUBCLASSES:
     all python classes must come before c classes (like QWidget) or super calls break.
@@ -292,6 +286,7 @@ class LinkableSetting():
     eg, def MyClass(LinkableSetting, QFrame) NOT def MyClass(QFrame, LinkableSetting)
     """
     registered_classes = []
+
     def __init__(self, setting):
         self.setting = setting
         self.registered_classes.append(self)
@@ -322,8 +317,6 @@ class LinkableSetting():
         set_setting(self.setting, value)
 
 
-
-
 def get_setting(name):
     type_ = TYPES[name][0]
     val = SETTINGS.value(name)
@@ -340,6 +333,7 @@ def get_setting(name):
     v = type_(val)
     return v
 
+
 def overwrite_outdated_settings():
     last_version = version.parse(get_setting("last_version"))
     last_version = version.parse(last_version.base_version) # remove dev stuff
@@ -352,6 +346,7 @@ def overwrite_outdated_settings():
                     continue
                 set_setting(setting, DEFAULTS[TYPES[setting][1]][setting])
     set_setting("last_version", __version__)
+
 
 def overwrite_with_config_settings():
     config = ConfigParser(interpolation=None)
@@ -380,9 +375,10 @@ def overwrite_with_config_settings():
 def reset_defaults():
     SETTINGS.clear()
     for d in DEFAULTS.values():
-        for key,value in d.items():
+        for key, value in d.items():
             set_setting(key, value)
     SETTINGS.sync()
+
 
 def set_setting(name, value):
     for linkable_setting in LinkableSetting.registered_classes:
@@ -424,6 +420,7 @@ def overwrite_config():
     with open(CFG_PATH, "a+") as f:
         config.write(f)
 
+
 def _index_by_defaults_dict(key):
     """
     Returns the index of the key in its respective section in the DEFAULTS dict.
@@ -459,6 +456,7 @@ def _index_by_defaults_dict(key):
     index = list(keys).index(key)
     return index
 
+
 def initialize_dirs():
     dirs = DEFAULTS["Locations"].keys()
     for dir_ in dirs:
@@ -466,10 +464,11 @@ def initialize_dirs():
         if not path.exists():
             path.mkdir(parents=True)
 
+
 # assemble dict of {key: [type, section], ...} since we have nested dicts in DEFAULTS
 # double list comprehension feels sooo backwards to write
 # eg {"cache_location": [<class "str">, "Locations"], ...}
-TYPES = {k:[type(v), section] for section,d in DEFAULTS.items() for k,v in d.items()}
+TYPES = {k: [type(v), section] for section, d in DEFAULTS.items() for k, v in d.items()}
 SETTINGS = QSettings("Circleguard", "Circleguard")
 # see third bullet here https://doc.qt.io/qt-5/qsettings.html#platform-limitations,
 # we don't want the global keys on macos when calling allkeys
@@ -477,7 +476,7 @@ SETTINGS.setFallbacksEnabled(False)
 
 # add setting if missing (occurs between updates if we add a new default setting)
 for d in DEFAULTS.values():
-    for key,value in d.items():
+    for key, value in d.items():
         if not SETTINGS.contains(key):
             set_setting(key, value)
 

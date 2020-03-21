@@ -1,7 +1,5 @@
 import os
 import sys
-from pathlib import Path
-from multiprocessing.pool import ThreadPool
 from queue import Queue, Empty
 from functools import partial
 import logging
@@ -12,37 +10,33 @@ import threading
 from datetime import datetime
 import math
 import time
-import json
 
-from PyQt5.QtCore import Qt, QTimer, qInstallMessageHandler, QObject, pyqtSignal, QUrl
-from PyQt5.QtWidgets import (QWidget, QFrame, QTabWidget, QTextEdit, QPushButton, QLabel, QScrollArea, QFrame, QProgressBar,
-                             QVBoxLayout, QShortcut, QGridLayout, QApplication, QMainWindow, QSizePolicy, QComboBox, QSpacerItem)
-from PyQt5.QtGui import QPalette, QColor, QIcon, QKeySequence, QTextCursor, QPainter, QDesktopServices, QPixmap
-
-# app needs to be initialized before settings is imported so QStandardPaths resolves
-# corerctly with the applicationName
-app = QApplication([])
-app.setStyle("Fusion")
-app.setApplicationName("Circleguard")
-
-from circleguard import (Circleguard, set_options, Loader, NoInfoAvailableException,
-                        ReplayMap, ReplayPath, User, Map, Check, MapUser, StealDetect,
-                        RelaxDetect, CorrectionDetect, ReplayStealingResult, RelaxResult, CorrectionResult, Detect)
+from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QUrl
+from PyQt5.QtWidgets import (QTabWidget, QTextEdit, QPushButton, QLabel, QScrollArea, QFrame, QProgressBar, QVBoxLayout,
+                             QShortcut, QGridLayout, QApplication, QMainWindow, QSizePolicy, QComboBox, QSpacerItem)
+from PyQt5.QtGui import QPalette, QColor, QIcon, QKeySequence, QTextCursor, QDesktopServices
+from circleguard import (Circleguard, Loader, NoInfoAvailableException, ReplayMap, ReplayPath, User,
+                         Map, Check, MapUser, StealDetect, RelaxDetect, CorrectionDetect, ReplayStealingResult,
+                         RelaxResult, CorrectionResult, Detect)
 from circleguard import __version__ as cg_version
 from circleguard.loadable import Loadable
 
 from utils import resource_path, run_update_check, Run, parse_mod_string, InvalidModException, delete_widget
-from widgets import (set_event_window, InputWidget, ResetSettings, WidgetCombiner,
-                     FolderChooser, IdWidgetCombined, Separator, OptionWidget, ButtonWidget,
-                     LoglevelWidget, SliderBoxSetting, BeatmapTest, ResultW, LineEditSetting,
-                     EntryWidget, RunWidget, ScrollableLoadablesWidget, ScrollableChecksWidget,
-                     ReplayMapW, ReplayPathW, MapW, UserW, MapUserW, StealCheckW, RelaxCheckW,
-                     CorrectionCheckW, VisualizerW)
+from widgets import (set_event_window, ResetSettings, WidgetCombiner, FolderChooser, Separator, OptionWidget,
+                     ButtonWidget, LoglevelWidget, SliderBoxSetting, BeatmapTest, ResultW, LineEditSetting,
+                     EntryWidget, RunWidget, ScrollableLoadablesWidget, ScrollableChecksWidget, ReplayMapW,
+                     ReplayPathW, MapW, UserW, MapUserW, StealCheckW, RelaxCheckW, CorrectionCheckW, VisualizerW)
 
-from settings import get_setting, set_setting, overwrite_config, overwrite_with_config_settings, LinkableSetting
 from visualizer import VisualizerWindow
 from wizard import CircleguardWizard
 from version import __version__
+
+# app needs to be initialized before settings is imported so QStandardPaths resolves
+# correctly with the applicationName
+app = QApplication([])
+app.setStyle("Fusion")
+app.setApplicationName("Circleguard")
+from settings import get_setting, set_setting, overwrite_config, overwrite_with_config_settings, LinkableSetting  # pylint: disable=wrong-import-position
 
 
 log = logging.getLogger(__name__)
@@ -55,9 +49,9 @@ sys._excepthook = sys.excepthook
 def my_excepthook(exctype, value, tb):
     # call original excepthook before ours
     log.exception("sys.excepthook error\n"
-              "Type: " + str(value) + "\n"
-              "Value: " + str(value) + "\n"
-              "Traceback: " + "".join(traceback.format_tb(tb)) + '\n')
+                  "Type: " + str(value) + "\n"
+                  "Value: " + str(value) + "\n"
+                  "Traceback: " + "".join(traceback.format_tb(tb)) + '\n')
     sys._excepthook(exctype, value, tb)
 
 sys.excepthook = my_excepthook
@@ -232,34 +226,47 @@ class WindowWrapper(LinkableSetting, QMainWindow):
         timestamp = datetime.now()
         label_text = None
         template_text = None
+        replays = None
 
         if isinstance(result, ReplayStealingResult):
-            label_text = get_setting("string_result_steal").format(ts=timestamp, similarity=result.similarity, r=result, r1=result.replay1, r2=result.replay2,
-                                        replay1_mods_short_name=result.replay1.mods.short_name(), replay1_mods_long_name=result.replay1.mods.long_name(),
-                                        replay2_mods_short_name=result.replay2.mods.short_name(), replay2_mods_long_name=result.replay2.mods.long_name())
-            template_text = get_setting("template_steal").format(ts=timestamp, similarity=result.similarity, r=result, r1=result.replay1, r2=result.replay2,
-                                        replay1_mods_short_name=result.replay1.mods.short_name(), replay1_mods_long_name=result.replay1.mods.long_name(),
-                                        replay2_mods_short_name=result.replay2.mods.short_name(), replay2_mods_long_name=result.replay2.mods.long_name())
+            label_text = get_setting("string_result_steal").format(ts=timestamp, similarity=result.similarity, r=result,
+                                                                   r1=result.replay1, r2=result.replay2,
+                                                                   replay1_mods_short_name=result.replay1.mods.short_name(),
+                                                                   replay1_mods_long_name=result.replay1.mods.long_name(),
+                                                                   replay2_mods_short_name=result.replay2.mods.short_name(),
+                                                                   replay2_mods_long_name=result.replay2.mods.long_name())
+            template_text = get_setting("template_steal").format(ts=timestamp, similarity=result.similarity, r=result,
+                                                                 r1=result.replay1, r2=result.replay2,
+                                                                 replay1_mods_short_name=result.replay1.mods.short_name(),
+                                                                 replay1_mods_long_name=result.replay1.mods.long_name(),
+                                                                 replay2_mods_short_name=result.replay2.mods.short_name(),
+                                                                 replay2_mods_long_name=result.replay2.mods.long_name())
             replays = [result.replay1, result.replay2]
 
         elif isinstance(result, RelaxResult):
             label_text = get_setting("string_result_relax").format(ts=timestamp, ur=result.ur, r=result,
-                                        replay=result.replay, mods_short_name=result.replay.mods.short_name(),
-                                        mods_long_name=result.replay.mods.long_name())
+                                                                   replay=result.replay,
+                                                                   mods_short_name=result.replay.mods.short_name(),
+                                                                   mods_long_name=result.replay.mods.long_name())
             template_text = get_setting("template_relax").format(ts=timestamp, ur=result.ur, r=result,
-                                        replay=result.replay, mods_short_name=result.replay.mods.short_name(),
-                                        mods_long_name=result.replay.mods.long_name())
+                                                                 replay=result.replay,
+                                                                 mods_short_name=result.replay.mods.short_name(),
+                                                                 mods_long_name=result.replay.mods.long_name())
             replays = [result.replay]
         elif isinstance(result, CorrectionResult):
-            label_text = get_setting("string_result_correction").format(ts=timestamp, r=result, num_snaps=len(result.snaps), replay=result.replay,
-                                        mods_short_name=result.replay.mods.short_name(), mods_long_name=result.replay.mods.long_name())
+            label_text = get_setting("string_result_correction").format(ts=timestamp, r=result, num_snaps=len(result.snaps),
+                                                                        replay=result.replay,
+                                                                        mods_short_name=result.replay.mods.short_name(),
+                                                                        mods_long_name=result.replay.mods.long_name())
 
             snap_table = ("| Time (ms) | Angle (°) | Distance (px) |\n"
-                            "| :-: | :-: | :-: |\n")
+                          "| :-: | :-: | :-: |\n")
             for snap in result.snaps:
                 snap_table += "| {:.0f} | {:.2f} | {:.2f} |\n".format(snap.time, snap.angle, snap.distance)
-            template_text = get_setting("template_correction").format(ts=timestamp, r=result, replay=result.replay, snap_table=snap_table,
-                                        mods_short_name=result.replay.mods.short_name(), mods_long_name=result.replay.mods.long_name())
+            template_text = get_setting("template_correction").format(ts=timestamp, r=result, replay=result.replay,
+                                                                      snap_table=snap_table,
+                                                                      mods_short_name=result.replay.mods.short_name(),
+                                                                      mods_long_name=result.replay.mods.long_name())
             replays = [result.replay]
         elif isinstance(result, list) and isinstance(result[0], Loadable):  # a list of loadables
             label_text = get_setting("string_result_visualization").format(ts=timestamp, replay_amount=len(result), map_id=result[0].map_id)
@@ -275,7 +282,7 @@ class WindowWrapper(LinkableSetting, QMainWindow):
         # remove info text if shown
         if not self.main_window.results_tab.results.info_label.isHidden():
             self.main_window.results_tab.results.info_label.hide()
-        self.main_window.results_tab.results.layout.insertWidget(0,result_widget)
+        self.main_window.results_tab.results.layout.insertWidget(0, result_widget)
 
     def copy_to_clipboard(self, text):
         self.clipboard.setText(text)
@@ -622,13 +629,13 @@ class MainTab(QFrame):
                         if span == "all":
                             span = "1-100"
                         loadable = Map(int(loadableW.map_id_input.field.text()), span=span,
-                                             mods=parse_mod_string(loadableW.mods_input.field.text()))
+                                       mods=parse_mod_string(loadableW.mods_input.field.text()))
                     if isinstance(loadableW, UserW):
-                        span=loadableW.span_input.field.text()
+                        span = loadableW.span_input.field.text()
                         if span == "all":
                             span = "1-100"
                         loadable = User(int(loadableW.user_id_input.field.text()), span=span,
-                                             mods=parse_mod_string(loadableW.mods_input.field.text()))
+                                        mods=parse_mod_string(loadableW.mods_input.field.text()))
                     if isinstance(loadableW, MapUserW):
                         span = loadableW.span_input.field.text() or loadableW.span_input.field.placeholderText()
                         if span == "all":
@@ -686,9 +693,9 @@ class MainTab(QFrame):
                 else:
                     self.set_progressbar_signal.emit(1)
                 num_loaded = num_total - num_unloaded
-                message_loading_replays = get_setting("message_loading_replays").format(ts=datetime.now(),
-                                num_total=num_total, num_previously_loaded=num_loaded, num_unloaded=num_unloaded,
-                                check_type=check_type)
+                message_loading_replays = get_setting("message_loading_replays").format(
+                    ts=datetime.now(), num_total=num_total, num_previously_loaded=num_loaded, num_unloaded=num_unloaded,
+                    check_type=check_type)
                 self.write_to_terminal_signal.emit(message_loading_replays)
                 for replay in replays:
                     _check_event(event)
@@ -700,9 +707,9 @@ class MainTab(QFrame):
                 # the data
                 self.set_progressbar_signal.emit(0)
                 setting = "message_starting_investigation_visualization" if isinstance(checkW, VisualizerW) else "message_starting_investigation"
-                message_starting_investigation = get_setting(setting).format(ts=datetime.now(),
-                                num_total=num_total, num_previously_loaded=num_loaded, num_unloaded=num_unloaded,
-                                check_type=check_type)
+                message_starting_investigation = get_setting(setting).format(
+                    ts=datetime.now(), num_total=num_total, num_previously_loaded=num_loaded, num_unloaded=num_unloaded,
+                    check_type=check_type)
                 self.write_to_terminal_signal.emit(message_starting_investigation)
                 if isinstance(checkW, VisualizerW):
                     map_ids = [r.map_id for r in replays]
@@ -752,28 +759,34 @@ class MainTab(QFrame):
                 message = None
                 if isinstance(result, ReplayStealingResult):
                     if result.ischeat:
-                        message = get_setting("message_steal_found").format(ts=ts, sim=result.similarity, r=result, replay1=result.replay1, replay2=result.replay2,
-                                                replay1_mods_short_name=result.replay1.mods.short_name(), replay1_mods_long_name=result.replay1.mods.long_name(),
-                                                replay2_mods_short_name=result.replay2.mods.short_name(), replay2_mods_long_name=result.replay2.mods.long_name())
+                        message = get_setting("message_steal_found").format(
+                            ts=ts, sim=result.similarity, r=result, replay1=result.replay1, replay2=result.replay2,
+                            replay1_mods_short_name=result.replay1.mods.short_name(), replay1_mods_long_name=result.replay1.mods.long_name(),
+                            replay2_mods_short_name=result.replay2.mods.short_name(), replay2_mods_long_name=result.replay2.mods.long_name())
                     elif result.similarity < get_setting("steal_max_sim_display"):
-                        message = get_setting("message_steal_found_display").format(ts=ts, sim=result.similarity, r=result, replay1=result.replay1,
-                                                replay2=result.replay2, replay1_mods_short_name=result.replay1.mods.short_name(), replay1_mods_long_name=result.replay1.mods.long_name(),
-                                                replay2_mods_short_name=result.replay2.mods.short_name(), replay2_mods_long_name=result.replay2.mods.long_name())
+                        message = get_setting("message_steal_found_display").format(
+                            ts=ts, sim=result.similarity, r=result, replay1=result.replay1,
+                            replay2=result.replay2, replay1_mods_short_name=result.replay1.mods.short_name(),
+                            replay1_mods_long_name=result.replay1.mods.long_name(), replay2_mods_short_name=result.replay2.mods.short_name(),
+                            replay2_mods_long_name=result.replay2.mods.long_name())
 
                 if isinstance(result, RelaxResult):
                     if result.ischeat:
-                        message = get_setting("message_relax_found").format(ts=ts, r=result, replay=result.replay, ur=result.ur,
-                                                mods_short_name=result.replay.mods.short_name(), mods_long_name=result.replay.mods.long_name())
+                        message = get_setting("message_relax_found").format(
+                            ts=ts, r=result, replay=result.replay, ur=result.ur, mods_short_name=result.replay.mods.short_name(),
+                            mods_long_name=result.replay.mods.long_name())
                     elif result.ur < get_setting("relax_max_ur_display"):
-                        message = get_setting("message_relax_found_display").format(ts=ts, r=result, replay=result.replay, ur=result.ur,
-                                                mods_short_name=result.replay.mods.short_name(), mods_long_name=result.replay.mods.long_name())
+                        message = get_setting("message_relax_found_display").format(
+                            ts=ts, r=result, replay=result.replay, ur=result.ur, mods_short_name=result.replay.mods.short_name(),
+                            mods_long_name=result.replay.mods.long_name())
 
                 if isinstance(result, CorrectionResult):
                     if result.ischeat:
                         snap_message = get_setting("message_correction_snaps")
                         snap_text = "\n".join([snap_message.format(time=snap.time, angle=snap.angle, distance=snap.distance) for snap in result.snaps])
-                        message = get_setting("message_correction_found").format(ts=ts, r=result, replay=result.replay, snaps=snap_text,
-                                                mods_short_name=result.replay.mods.short_name(), mods_long_name=result.replay.mods.long_name())
+                        message = get_setting("message_correction_found").format(
+                            ts=ts, r=result, replay=result.replay, snaps=snap_text, mods_short_name=result.replay.mods.short_name(),
+                            mods_long_name=result.replay.mods.long_name())
                 # message is None if the result isn't a cheat and doesn't
                 # satisfy its display threshold
                 if message:
@@ -836,7 +849,7 @@ class VisualizeTab(QFrame):
         self.label_map_id = QLabel(self)
         self.update_map_id_label()
         self.file_chooser = FolderChooser("Add Replays", folder_mode=False, multiple_files=True,
-                                            file_ending="osu! Replayfile (*osr)", display_path=False)
+                                          file_ending="osu! Replayfile (*osr)", display_path=False)
         self.file_chooser.path_signal.connect(self.add_files)
         self.folder_chooser = FolderChooser("Add Folder", display_path=False)
         self.folder_chooser.path_signal.connect(self.add_folder)
@@ -887,7 +900,7 @@ class VisualizeTab(QFrame):
             log.info(f"Changing map_id from {self.map_id} to {replay.map_id}")
             self.map_id = replay.map_id
             self.update_map_id_label()
-        elif replay.map_id != self.map_id: # ignore replay with diffrent map_ids
+        elif replay.map_id != self.map_id: # ignore replay with different map_ids
             log.error(f"replay {replay} doesn't match with current map_id ({replay.map_id} != {self.map_id})")
             return
         if not any(replay.replay_id == r.data.replay_id for r in self.replays): # check if already stored
@@ -903,7 +916,7 @@ class VisualizeTab(QFrame):
                 widget = EntryWidget(f"{replay.username}'s play with the id {replay.replay_id}", "Delete", replay)
                 widget.clicked_signal.connect(self.remove_replay)
                 self.replays.append(widget)
-                self.result_frame.results.layout.insertWidget(0,widget)
+                self.result_frame.results.layout.insertWidget(0, widget)
         except Empty:
             pass
 
@@ -943,9 +956,9 @@ class SettingsTab(QFrame):
         self.setting_buttons = WidgetCombiner(self.open_settings, self.sync_settings)
 
         layout = QGridLayout()
-        layout.addWidget(self.info, 0,0,1,1, alignment=Qt.AlignLeft)
-        layout.addWidget(self.setting_buttons, 0,1,1,1, alignment=Qt.AlignRight)
-        layout.addWidget(self.qscrollarea, 1,0,1,2)
+        layout.addWidget(self.info, 0, 0, 1, 1, alignment=Qt.AlignLeft)
+        layout.addWidget(self.setting_buttons, 0, 1, 1, 1, alignment=Qt.AlignRight)
+        layout.addWidget(self.qscrollarea, 1, 0, 1, 2)
 
         self.setLayout(layout)
 
@@ -1104,13 +1117,14 @@ class QueueTab(QFrame):
         self.cancel_run_signal.emit(run_id)
         self.run_widgets[run_id].cancel()
 
-class QueueFrame(QFrame):
 
+class QueueFrame(QFrame):
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
         self.layout.setAlignment(Qt.AlignTop)
         self.setLayout(self.layout)
+
 
 class ThresholdsTab(QFrame):
     def __init__(self):
@@ -1123,27 +1137,35 @@ class ThresholdsTab(QFrame):
         self.layout.addWidget(self.qscrollarea)
         self.setLayout(self.layout)
 
+
 class ScrollableThresholdsWidget(QFrame):
     def __init__(self):
         super().__init__()
-        self.steal_max_sim = SliderBoxSetting("Max similarity", "ReplaySteal comparisons that score below this "
-                "will be stored so you can view them, and printed to the console", "steal_max_sim", 100)
-        self.steal_max_sim_display = SliderBoxSetting("Max similarity display", "ReplaySteal comparisons that "
-                "score below this will be printed to the console", "steal_max_sim_display", 100)
-        self.relax_max_ur = SliderBoxSetting("Max ur", "Replays that have a ur lower than this will be stored "
-                "so you can view them, and printed to the console", "relax_max_ur", 300)
-        self.relax_max_ur_display = SliderBoxSetting("Max ur display", "Replays with a ur lower than this "
-                "will be printed to the console", "relax_max_ur_display", 300)
+        self.steal_max_sim = SliderBoxSetting(
+            "Max similarity", "ReplaySteal comparisons that score below this will be stored so you can view them, "
+                              "and printed to the console", "steal_max_sim", 100)
+        self.steal_max_sim_display = SliderBoxSetting(
+            "Max similarity display", "ReplaySteal comparisons that score below this will be printed to the console",
+            "steal_max_sim_display", 100)
+        self.relax_max_ur = SliderBoxSetting(
+            "Max ur", "Replays that have a ur lower than this will be stored so you can view them, "
+                      "and printed to the console", "relax_max_ur", 300)
+        self.relax_max_ur_display = SliderBoxSetting(
+            "Max ur display", "Replays with a ur lower than this will be printed to the console",
+            "relax_max_ur_display", 300)
         # display options for correction are more confusing than they're worth,
         # especially when we don't have a good mechanism for storing Snaps in
         # the Result tab or visualizer support for the Snap timestamps. TODO
         # potentially add back if we can provide good support for them.
-        self.correction_max_angle = SliderBoxSetting("Max angle", "Replays with a set of three points "
-                "making an angle less than this (*and* also satisfying correction_min_distance) will be stored so "
-                "you can view them, and printed to the console.", "correction_max_angle", 360)
-        self.correction_min_distance = SliderBoxSetting("Min distance", "Replays with a set of three points "
-                "where either the distance from AB or BC is greater than this (*and* also satisfying correction_max_angle) "
-                "will be stored so you can view them, and printed to the console.", "correction_min_distance", 100)
+        self.correction_max_angle = SliderBoxSetting(
+            "Max angle", "Replays with a set of three points making an angle less than this "
+                         "(*and* also satisfying correction_min_distance) will be stored so you can view them, "
+                         "and printed to the console.", "correction_max_angle", 360)
+        self.correction_min_distance = SliderBoxSetting(
+            "Min distance", "Replays with a set of three points where either the distance from AB"
+                            " or BC is greater than this (*and* also satisfying correction_max_angle) "
+                            "will be stored so you can view them, and printed to the console.",
+            "correction_min_distance", 100)
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(Separator("Replay Stealing"))
@@ -1158,6 +1180,7 @@ class ScrollableThresholdsWidget(QFrame):
 
         self.layout.setAlignment(Qt.AlignTop)
         self.setLayout(self.layout)
+
 
 def switch_theme(dark, accent=QColor(71, 174, 247)):
     set_setting("dark_theme", dark)

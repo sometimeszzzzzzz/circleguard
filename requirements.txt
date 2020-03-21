@@ -1,3 +1,4 @@
+requests
 PyQt5<=5.12.2
 circleguard==3.2.1
 packaging>=17.0
