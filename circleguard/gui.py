@@ -378,7 +378,9 @@ class MainTab(QFrame):
         self.loadables_scrollarea.setWidgetResizable(True)
 
         self.checks_scrollarea = QScrollArea(self)
+        self.info_label = QLabel("Add a Check to investigate Loadables")
         self.checks_scrollarea.setWidget(ScrollableChecksWidget())
+        self.checks_scrollarea.widget().layout.addWidget(self.info_label)
         self.checks_scrollarea.setWidgetResizable(True)
 
         self.loadables = [] # for deleting later
@@ -441,6 +443,8 @@ class MainTab(QFrame):
         self.checks_scrollarea.widget().layout.removeWidget(check)
         delete_widget(check)
         self.checks.remove(check)
+        if self.checks_scrollarea.widget().layout.count() == 1:
+            self.info_label.show()
 
     def add_loadable(self):
         button_data = self.loadables_combobox.currentData()
@@ -471,6 +475,9 @@ class MainTab(QFrame):
         w.remove_check_signal.connect(self.remove_check)
         self.checks_scrollarea.widget().layout.addWidget(w)
         self.checks.append(w)
+        if not self.info_label.isHidden():
+            self.info_label.hide()
+
 
     def write(self, message):
         self.terminal.append(str(message).strip())

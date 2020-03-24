@@ -366,6 +366,8 @@ class DropArea(QFrame):
 
         self.layout = QVBoxLayout()
         self.layout.setAlignment(Qt.AlignTop)
+        self.info_label = QLabel("You can drop Loadables here to check them against this Check!")
+        self.layout.addWidget(self.info_label)
         self.setLayout(self.layout)
 
     def dragEnterEvent(self, event):
@@ -388,6 +390,9 @@ class DropArea(QFrame):
         self.loadable_ids.append(id_)
         loadable = LoadableInCheck(name + f" (id: {id_})", id_)
         self.layout.addWidget(loadable)
+
+        if not self.info_label.isHidden():
+            self.info_label.hide()
         self.loadables.append(loadable)
         loadable.remove_loadableincheck_signal.connect(self.remove_loadable)
 
@@ -407,6 +412,8 @@ class DropArea(QFrame):
         delete_widget(loadable)
         self.loadables.remove(loadable)
         self.loadable_ids.remove(loadable.loadable_id)
+        if self.layout.count() == 1:
+            self.info_label.show()
 
 
 class CheckW(QFrame):
