@@ -37,7 +37,7 @@ from widgets import (set_event_window, InputWidget, ResetSettings, WidgetCombine
                      LoglevelWidget, SliderBoxSetting, BeatmapTest, ResultW, LineEditSetting,
                      EntryWidget, RunWidget, ScrollableLoadablesWidget, ScrollableChecksWidget,
                      ReplayMapW, ReplayPathW, MapW, UserW, MapUserW, StealCheckW, RelaxCheckW,
-                     CorrectionCheckW, VisualizerW)
+                     CorrectionCheckW, VisualizerW, UserCheck, Terminal)
 
 from settings import get_setting, set_setting, overwrite_config, overwrite_with_config_settings, LinkableSetting
 from visualizer import VisualizerWindow
@@ -309,29 +309,20 @@ class DebugWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Debug Output")
         self.setWindowIcon(QIcon(str(resource_path("resources/logo.ico"))))
-        terminal = QTextEdit(self)
-        terminal.setReadOnly(True)
-        terminal.ensureCursorVisible()
-        self.terminal = terminal
+        self.terminal = Terminal()
         self.setCentralWidget(self.terminal)
         self.resize(800, 350)
 
     def write(self, message):
-        self.terminal.append(message)
+        self.terminal.write(message)
 
 class MainWindow(QFrame):
     def __init__(self):
         super().__init__()
 
-        # create here so we can use in either main or quick investigation tab
-        terminal = QTextEdit(self)
-        terminal.setFocusPolicy(Qt.ClickFocus)
-        terminal.setReadOnly(True)
-        terminal.ensureCursorVisible()
-
         self.tabs = QTabWidget()
-        self.main_tab = MainTab(terminal)
-        self.user_check_tab = UserCheckTab(terminal)
+        self.main_tab = MainTab()
+        self.user_check_tab = UserCheckTab()
         self.results_tab = ResultsTab()
         self.queue_tab = QueueTab()
         self.thresholds_tab = ThresholdsTab()
@@ -364,9 +355,9 @@ class MainTab(QFrame):
     LOADABLES_COMBOBOX_REGISTRY = ["Map Replay", "Local Replay", "Map", "User", "All Map Replays by User"]
     CHECKS_COMBOBOX_REGISTRY = ["Replay Stealing/Remodding", "Relax", "Aim Correction", "Visualize"]
 
-    def __init__(self, terminal):
+    def __init__(self):
         super().__init__()
-        self.terminal = terminal
+        self.terminal = Terminal()
 
         self.loadables_combobox = QComboBox(self)
         self.loadables_combobox.setInsertPolicy(QComboBox.NoInsert)
@@ -476,13 +467,7 @@ class MainTab(QFrame):
         self.checks.append(w)
 
     def write(self, message):
-        self.terminal.append(str(message).strip())
-        self.scroll_to_bottom()
-
-    def scroll_to_bottom(self):
-        cursor = QTextCursor(self.terminal.document())
-        cursor.movePosition(QTextCursor.End)
-        self.terminal.setTextCursor(cursor)
+        self.terminal.write(message)
 
     def add_circleguard_run(self):
         checks = self.checks
@@ -803,9 +788,23 @@ class MainTab(QFrame):
 
 class UserCheckTab(QFrame):
 
-    def __init__(self, terminal):
+    def __init__(self):
         super().__init__()
-        self.terminal = terminal
+        self.terminal = Terminal()
+        # remove expand flag from terminal so it doesn't hog all the space from user check.
+        # Couldn't figure out how to do this cleaner (in-place modification didn't work)
+        terminal_size_policy = QSizePolicy(self.terminal.sizePolicy().horizontalPolicy(), self.terminal.sizePolicy().verticalPolicy() & ~QSizePolicy.ExpandFlag)
+        self.terminal.setSizePolicy(terminal_size_policy)
+        self.user_check = UserCheck()
+
+        vert_spacer = QSpacerItem(0, 100, QSizePolicy.Minimum, QSizePolicy.MinimumExpanding)
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.user_check, 0, 0, 1, 1)
+        # leave some space between user check and terminal
+        self.layout.addItem(vert_spacer, 1, 0, 1, 1)
+        self.layout.addWidget(self.terminal, 2, 0, 1, 4)
+        # layout.addWidget(self.run_button, 7, 0, 1, 16)
+        self.setLayout(self.layout)
 
 
 class TrackerLoader(Loader, QObject):

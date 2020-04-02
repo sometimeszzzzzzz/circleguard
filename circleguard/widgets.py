@@ -5,9 +5,9 @@ from functools import partial
 import json
 
 from PyQt5.QtWidgets import (QWidget, QFrame, QGridLayout, QLabel, QLineEdit, QMessageBox,
-                             QSpacerItem, QSizePolicy, QSlider, QSpinBox, QFrame,
+                             QSpacerItem, QSizePolicy, QSlider, QSpinBox, QFrame, QTextEdit,
                              QDoubleSpinBox, QFileDialog, QPushButton, QCheckBox, QComboBox, QVBoxLayout)
-from PyQt5.QtGui import QRegExpValidator, QIcon, QDrag
+from PyQt5.QtGui import QRegExpValidator, QIcon, QDrag, QTextCursor
 from PyQt5.QtCore import QRegExp, Qt, QDir, QCoreApplication, pyqtSignal, QPoint, QMimeData
 
 from settings import get_setting, reset_defaults, LinkableSetting, set_setting
@@ -746,6 +746,34 @@ class RunWidget(QFrame):
         self.status_label.setText("<b>Status: " + self.status + "</b>")
 
 
+class UserCheck(QFrame):
+
+    def __init__(self):
+        super().__init__()
+        self.user_id_input = InputWidget("User id", "", "id")
+        self.span_input = InputWidget("Span", "", "normal")
+
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.user_id_input, 1, 0, 1, 8)
+        self.layout.addWidget(self.span_input, 2, 0, 1, 8)
+        self.setLayout(self.layout)
+
+
+class Terminal(QTextEdit):
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(Qt.ClickFocus)
+        self.setReadOnly(True)
+        self.ensureCursorVisible()
+
+    def write(self, message):
+        self.append(str(message).strip())
+        self.scroll_to_bottom()
+
+    def scroll_to_bottom(self):
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.End)
+        self.setTextCursor(cursor)
 
 class SliderBoxSetting(LinkableSetting, QFrame):
     """
