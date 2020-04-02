@@ -521,7 +521,7 @@ class MainTab(QFrame):
             # so we don't have prints to the console for no reason
             return
 
-        run = Run(checks, self.run_id, threading.Event())
+        run = Run(checks, self.run_id)
         self.runs.append(run)
         self.add_run_to_queue_signal.emit(run)
         self.cg_q.put(run)

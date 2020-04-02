@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import os
 from datetime import datetime, timedelta
+import threading
 
 from circleguard import Mod
 from packaging import version
@@ -109,10 +110,10 @@ class Run():
     multiple Checks, each of which contains a set of Loadables.
     """
 
-    def __init__(self, checks, run_id, event):
+    def __init__(self, checks, run_id):
         self.checks = checks
         self.run_id = run_id
-        self.event = event
+        self.event = threading.Event()
 
 class Player():
     def __init__(self, data, replay, username, mods, buffer, cursor_color, pos):
