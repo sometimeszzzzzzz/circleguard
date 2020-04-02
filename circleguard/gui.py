@@ -323,13 +323,21 @@ class MainWindow(QFrame):
     def __init__(self):
         super().__init__()
 
+        # create here so we can use in either main or quick investigation tab
+        terminal = QTextEdit(self)
+        terminal.setFocusPolicy(Qt.ClickFocus)
+        terminal.setReadOnly(True)
+        terminal.ensureCursorVisible()
+
         self.tabs = QTabWidget()
-        self.main_tab = MainTab()
+        self.main_tab = MainTab(terminal)
+        self.user_check_tab = UserCheckTab(terminal)
         self.results_tab = ResultsTab()
         self.queue_tab = QueueTab()
         self.thresholds_tab = ThresholdsTab()
         self.settings_tab = SettingsTab()
         self.tabs.addTab(self.main_tab, "Main")
+        self.tabs.addTab(self.user_check_tab, "User Check")
         self.tabs.addTab(self.results_tab, "Results")
         self.tabs.addTab(self.queue_tab, "Queue")
         self.tabs.addTab(self.thresholds_tab, "Thresholds")
@@ -356,8 +364,9 @@ class MainTab(QFrame):
     LOADABLES_COMBOBOX_REGISTRY = ["Map Replay", "Local Replay", "Map", "User", "All Map Replays by User"]
     CHECKS_COMBOBOX_REGISTRY = ["Replay Stealing/Remodding", "Relax", "Aim Correction", "Visualize"]
 
-    def __init__(self):
+    def __init__(self, terminal):
         super().__init__()
+        self.terminal = terminal
 
         self.loadables_combobox = QComboBox(self)
         self.loadables_combobox.setInsertPolicy(QComboBox.NoInsert)
@@ -392,12 +401,6 @@ class MainTab(QFrame):
         self.runs = [] # Run objects for canceling runs
         self.run_id = 0
         self.visualizer_window = None
-
-        terminal = QTextEdit(self)
-        terminal.setFocusPolicy(Qt.ClickFocus)
-        terminal.setReadOnly(True)
-        terminal.ensureCursorVisible()
-        self.terminal = terminal
 
         self.run_button = QPushButton()
         self.run_button.setText("Run")
@@ -796,6 +799,13 @@ class MainTab(QFrame):
             self.visualizer_window.close()
         self.visualizer_window = VisualizerWindow(replays=replays, beatmap_id=beatmap_id)
         self.visualizer_window.show()
+
+
+class UserCheckTab(QFrame):
+
+    def __init__(self, terminal):
+        super().__init__()
+        self.terminal = terminal
 
 
 class TrackerLoader(Loader, QObject):
