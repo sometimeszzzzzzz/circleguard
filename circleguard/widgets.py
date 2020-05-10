@@ -1327,9 +1327,6 @@ class Score(QFrame):
         Thread(target=self._load).start()
 
     def _load(self):
-        # TODO each time a users is viewed this function will be called up
-        # TODO to 100 times, this will spam the api!
-        api = ossapi(get_setting("api_key"))
         score_dict = self.score_dict
         beatmap = cached_beatmap_lookup(score_dict["beatmap_id"])
         self.info_label.setText(
