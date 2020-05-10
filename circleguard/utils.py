@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 import os
+import logging
+import time
 from datetime import datetime, timedelta
 
 from circleguard import Mod
@@ -86,7 +88,7 @@ def parse_mod_string(mod_string):
 
 
 def delete_widget(widget):
-    if widget.layout is not None:
+    if isinstance(widget.layout, QLayout):
         clear_layout(widget.layout)
         widget.layout = None
     widget.deleteLater()
@@ -125,3 +127,30 @@ class Player:
         self.end_pos = 0
         self.start_pos = 0
         self.mods = replay.mods
+
+
+def score_to_acc(score_dict):
+    judgements = (int(score_dict["countmiss"]) +
+                  int(score_dict["count50"]) +
+                  int(score_dict["count100"]) +
+                  int(score_dict["count300"]))
+    max_judgment_score = 300 * judgements
+    achieved_judgment_score = (
+            50 * int(score_dict["count50"]) +
+            100 * int(score_dict["count100"]) +
+            300 * int(score_dict["count300"]))
+    accuracy = (achieved_judgment_score/max_judgment_score)*100
+    return round(accuracy, 2)
+
+
+def retrying_request(func, params, max_retries=5, cooldown=5):
+    for i in range(max_retries):
+        try:
+            response = func(params)
+            logging.error("Request %s succeeded (Attempt #%s)", func.__name__, i+1)
+            return response
+        except requests.exceptions.ConnectionError:
+            logging.error("Request %s with params %s failed, sleeping for %s seconds and trying again (Attempt #%s)", func.__name__, params, cooldown, i+1)
+            time.sleep(cooldown)
+    return {"error": "Api not available"}
+

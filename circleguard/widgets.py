@@ -1,17 +1,21 @@
-import sys
 import ntpath
 from pathlib import Path
+from threading import Thread
+from pprint import pprint
+import os
 from functools import partial
+from circleguard import Circleguard, ReplayPath, Mod
+from ossapi import ossapi
 import json
 
-from PyQt5.QtWidgets import (QWidget, QFrame, QGridLayout, QLabel, QLineEdit, QMessageBox,
+from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit, QMessageBox,
                              QSpacerItem, QSizePolicy, QSlider, QSpinBox, QFrame,
-                             QDoubleSpinBox, QFileDialog, QPushButton, QCheckBox, QComboBox, QVBoxLayout)
+                             QDoubleSpinBox, QFileDialog, QPushButton, QCheckBox, QComboBox, QVBoxLayout, QScrollArea)
 from PyQt5.QtGui import QRegExpValidator, QIcon, QDrag
-from PyQt5.QtCore import QRegExp, Qt, QDir, QCoreApplication, pyqtSignal, QPoint, QMimeData
+from PyQt5.QtCore import QRegExp, Qt, QCoreApplication, pyqtSignal, QPoint, QMimeData
 
 from settings import get_setting, reset_defaults, LinkableSetting, set_setting
-from utils import resource_path, delete_widget
+from utils import resource_path, delete_widget, score_to_acc, retrying_request
 
 SPACER = QSpacerItem(100, 0, QSizePolicy.Maximum, QSizePolicy.Minimum)
 
@@ -153,9 +157,8 @@ class InputWidget(QFrame):
     on the constructor call. The former two inherit from LineEdit.
     """
 
-    def __init__(self, title, tooltip, type_):
+    def __init__(self, title, tooltip, type_, compact=False):
         super(InputWidget, self).__init__()
-
         label = QLabel(self)
         label.setText(title+":")
         label.setToolTip(tooltip)
@@ -165,11 +168,13 @@ class InputWidget(QFrame):
             self.field = IDLineEdit(self)
         if type_ == "normal":
             self.field = LineEdit(self)
-
         self.layout = QGridLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.addWidget(label, 0, 0, 1, 1)
-        self.layout.addItem(SPACER, 0, 1, 1, 1)
+        if compact:
+            label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        else:
+            self.layout.addItem(SPACER, 0, 1, 1, 1)
         self.layout.addWidget(self.field, 0, 2, 1, 3)
         self.setLayout(self.layout)
 
@@ -211,8 +216,33 @@ class IdWidgetCombined(QFrame):
         """
         self.user_id.setEnabled(self.map_id.field.text() != "")
 
+class OptionWidget(QFrame):
+    """
+    A container class of widgets that represents an option with a boolean state.
+    This class holds a Label and CheckBox.
+    """
 
-class OptionWidget(LinkableSetting, QFrame):
+    def __init__(self, title, tooltip, end=":", compact=False):
+        QFrame.__init__(self)
+
+        label = QLabel(self)
+        label.setText(title + end)
+        label.setToolTip(tooltip)
+        self.box = QCheckBox(self)
+        item = CenteredWidget(self.box)
+        self.layout = QGridLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.addWidget(label, 0, 0, 1, 1)
+        if compact:
+            label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+            self.layout.addWidget(item, 0, 1, 1, 1, Qt.AlignLeft)
+        else:
+            item.setFixedWidth(100)
+            self.layout.addWidget(item, 0, 1, 1, 1, Qt.AlignRight)
+        self.setLayout(self.layout)
+
+
+class LinkedOptionWidget(LinkableSetting, OptionWidget):
     """
     A container class of widgets that represents an option with a boolean state.
     This class holds a Label and CheckBox.
@@ -223,21 +253,9 @@ class OptionWidget(LinkableSetting, QFrame):
         String setting: The name of the setting to link this OptionWidget to.
         """
         LinkableSetting.__init__(self, setting)
-        QFrame.__init__(self)
-
-        label = QLabel(self)
-        label.setText(title + end)
-        label.setToolTip(tooltip)
-        self.box = QCheckBox(self)
+        OptionWidget.__init__(self, title, tooltip, end=end)
         self.box.setChecked(self.setting_value)
         self.box.stateChanged.connect(self.on_setting_changed_from_gui)
-        item = CenteredWidget(self.box)
-        item.setFixedWidth(100)
-        self.layout = QGridLayout()
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.addWidget(label, 0, 0, 1, 1)
-        self.layout.addWidget(item, 0, 1, 1, 1, Qt.AlignRight)
-        self.setLayout(self.layout)
 
     def on_setting_changed(self, new_value):
         self.box.setChecked(new_value)
@@ -332,8 +350,7 @@ class LoglevelWidget(QFrame):
         self.setLayout(self.layout)
 
 
-
-class ScrollableLoadablesWidget(QFrame):
+class ScrollableWidget(QFrame):
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -341,12 +358,9 @@ class ScrollableLoadablesWidget(QFrame):
         self.setLayout(self.layout)
 
 
-class ScrollableChecksWidget(QFrame):
-    def __init__(self):
-        super().__init__()
-        self.layout = QVBoxLayout()
-        self.layout.setAlignment(Qt.AlignTop)
-        self.setLayout(self.layout)
+# TODO remove
+ScrollableLoadablesWidget = ScrollableWidget
+ScrollableChecksWidget = ScrollableWidget
 
 
 class DropArea(QFrame):
@@ -654,7 +668,6 @@ class UserW(LoadableW):
         self.layout.addWidget(self.span_input, 2, 0, 1, 8)
         self.layout.addWidget(self.mods_input, 3, 0, 1, 8)
 
-
 class MapUserW(LoadableW):
     def __init__(self):
         self.map_id_input = InputWidget("Map id", "", "id")
@@ -827,10 +840,8 @@ class WidgetCombiner(QFrame):
 class FolderChooser(QFrame):
     path_signal = pyqtSignal(object) # an iterable if multiple_files is True, str otherwise
 
-    def __init__(self, title, path=str(Path.home()), folder_mode=True, multiple_files=False, file_ending="osu! Beatmapfile (*.osu)", display_path=True):
+    def __init__(self, title, path=str(Path.home()), folder_mode=True, multiple_files=False, file_ending="osu! Replayfile (*.osr)", display_path=True, compact=False):
         super(FolderChooser, self).__init__()
-        self.highlighted = False
-        self.changed = False # if the selection currently differs from the default path
         self.default_path = path
         self.path = path
         self.display_path = display_path
@@ -853,13 +864,19 @@ class FolderChooser(QFrame):
         self.path_label = QLabel(self)
         if self.display_path:
             self.path_label.setText(path)
-        self.combined = WidgetCombiner(self.path_label, self.file_chooser_button)
+
+        if compact:
+            self.combined = WidgetCombiner(self.file_chooser_button, self.path_label)
+        else:
+            self.combined = WidgetCombiner(self.path_label, self.file_chooser_button)
+
         self.old_stylesheet = self.combined.styleSheet() # for mousePressedEvent / show_required
 
         self.layout = QGridLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.addWidget(self.label, 0, 0, 1, 1)
-        self.layout.addItem(SPACER, 0, 1, 1, 1)
+        if not compact:
+            self.layout.addItem(SPACER, 0, 1, 1, 1)
         self.layout.addWidget(self.combined, 0, 2, 1, 3)
         self.setLayout(self.layout)
         self.switch_enabled(True)
@@ -947,28 +964,6 @@ class ResetSettings(QFrame):
             QCoreApplication.quit()
 
 
-class BeatmapTest(QFrame):
-    def __init__(self):
-        super(BeatmapTest, self).__init__()
-        self.visualizer_window = None
-
-        self.file_chooser = FolderChooser("Beatmap File", folder_mode=False)
-        self.label = QLabel(self)
-        self.label.setText("Test Beatmap:")
-
-        self.button = QPushButton(self)
-        self.button.setText("Visualize")
-        self.button.setFixedWidth(100)
-
-        self.layout = QGridLayout()
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.addWidget(self.file_chooser, 0, 0, 1, 3)
-        self.layout.addWidget(self.label, 1, 0, 1, 1)
-        self.layout.addItem(SPACER, 1, 1, 1, 1)
-        self.layout.addWidget(self.button, 1, 2, 1, 1)
-        self.setLayout(self.layout)
-
-
 class EntryWidget(QFrame):
     pressed_signal = pyqtSignal(object)
     """
@@ -1051,3 +1046,345 @@ class VisualizerControls(QFrame):
         self.layout.setContentsMargins(5, 0, 5, 5)
         self.setLayout(self.layout)
         self.setFixedHeight(25)
+
+
+class CheckSelector(QFrame):
+    def __init__(self):
+        super().__init__()
+        label = QLabel("Active Detects:")
+        self.steal = OptionWidget("Steal/Remod", "TODO", compact=True)
+        self.steal.box.setChecked(True)
+        self.relax = OptionWidget("Relax", "TODO", compact=True)
+        self.relax.box.setChecked(True)
+        self.aim = OptionWidget("Aimcorrect", "TODO", compact=True)
+        self.aim.box.setChecked(True)
+        spacer = QSpacerItem(10, 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
+
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.addWidget(label, 0, 0, 1, 2)
+        self.layout.addItem(spacer, 1, 0, 1, 1)
+        self.layout.addWidget(self.steal, 1, 1, 1, 1)
+        self.layout.addItem(spacer, 1, 2, 1, 1)
+        self.layout.addWidget(self.relax, 1, 3, 1, 1)
+        self.layout.addItem(spacer, 1, 4, 1, 1)
+        self.layout.addWidget(self.aim, 1, 5, 1, 1)
+        self.layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.setLayout(self.layout)
+
+
+class MapSettings(QFrame):
+    def __init__(self):
+        super(MapSettings, self).__init__()
+        label = QLabel("Per Map Settings:")
+        self.bm_range = InputWidget("Range", "", "normal", compact=True)
+        self.bm_range.field.setPlaceholderText("1-50")
+
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.setColumnMinimumWidth(0, 10)
+        self.layout.addWidget(label, 0, 0, 1, 3)
+        self.layout.addWidget(self.bm_range, 1, 1, 1, 2)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.setLayout(self.layout)
+
+
+class CompareMode(QFrame):
+    def __init__(self):
+        super().__init__()
+        label = QLabel("Compare Mode:")
+        self.option = OptionWidget("Only compare against/check added replays", "TODO", compact=True)
+        spacer = QSpacerItem(10, 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
+
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.addWidget(label, 0, 0, 1, 2)
+        self.layout.addItem(spacer, 1, 0, 1, 1)
+        self.layout.addWidget(self.option, 1, 1, 1, 1)
+        self.layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.setLayout(self.layout)
+
+
+class EntryWidget(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.delete_button = QPushButton(self)
+        self.delete_button.setIcon(QIcon(str(resource_path("./resources/delete.png"))))
+        self.delete_button.setMaximumWidth(30)
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("QLabel{color:red;}")
+        self.error_label.setHidden(True)
+
+        spacer = QSpacerItem(25, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.layout = QGridLayout()
+        self.layout.setHorizontalSpacing(10)
+        self.layout.addItem(spacer, 0, 3, 1, 1)
+        self.layout.addWidget(self.error_label, 0, 4, 1, 1)
+        self.layout.addWidget(self.delete_button, 0, 5, 1, 1)
+
+    def show_error(self, error_messages):
+        self.error_label.setHidden(False)
+        if len(error_messages) > 1:
+            self.error_label.setText(f"{len(error_messages)} Errors found")
+            self.error_label.setToolTip("\n".join(error_messages))
+        else:
+            self.error_label.setText(error_messages[0])
+            self.error_label.setToolTip("")
+        self.setStyleSheet("EntryWidget {border: 2px solid red;}")
+
+    def hide_error(self):
+        self.error_label.setHidden(True)
+        self.setStyleSheet("")
+        self.error_label.setToolTip("")
+
+
+class UserWidget(EntryWidget):
+    def __init__(self):
+        super().__init__()
+        self.user_id_input = InputWidget("User id", "", "id", compact=True)
+        self.user_id_input.setFixedWidth(200)
+        self.replay_mode = OptionWidget("All Replays", "TODO", end="?", compact=True)
+        self.mods_input = InputWidget("Mods", "TODO", "normal", compact=True)
+        self.mods_input.setFixedWidth(200)
+        self.replay_mode.box.clicked.connect(self.toggle_mod_input)
+
+        self.layout.addWidget(self.user_id_input, 0, 0, 1, 1)
+        self.layout.addWidget(self.replay_mode, 0, 1, 1, 1)
+        self.layout.addWidget(self.mods_input, 0, 2, 1, 1)
+
+        self.setLayout(self.layout)
+
+    def toggle_mod_input(self, state):
+        self.mods_input.setDisabled(state)
+
+
+class LocalWidget(LinkableSetting, EntryWidget):
+
+    def __init__(self, map_id):
+        LinkableSetting.__init__(self, "api_key")
+        EntryWidget.__init__(self)
+        self.map_id = map_id
+        # buttons
+        self.file_chooser_button = QPushButton("Select File")
+        self.file_chooser_button.setFixedWidth(100)
+        self.file_chooser_button.clicked.connect(self._get_file)
+        self.folder_button = QPushButton("Select Folder")
+        self.folder_button.setFixedWidth(100)
+        self.folder_button.clicked.connect(self._get_folder)
+        # label
+        self.label = QLabel("No replay selected")
+        # stuff
+        cache_path = resource_path(get_setting("cache_dir") + "circleguard.db")
+        self.cg = Circleguard(get_setting("api_key"), cache_path)
+        self.replays = []
+
+        self.layout.addWidget(self.file_chooser_button, 0, 0, 1, 1)
+        self.layout.addWidget(self.folder_button, 0, 1, 1, 1)
+        self.layout.addWidget(self.label, 0, 2, 1, 1)
+
+        self.setLayout(self.layout)
+
+    def set_map_id(self, map_id):
+        self.map_id = map_id
+        print("updated id")
+        self._check_replays()
+
+    def on_setting_changed(self, new_value):
+        cache_path = resource_path(get_setting("cache_dir") + "circleguard.db")
+        self.cg = Circleguard(new_value, cache_path)
+
+    def _get_file(self):
+        self._start(QFileDialog.getOpenFileName(caption="Select File", filter="osu! Replayfile (*.osr)")[0])
+
+    def _get_folder(self):
+        options = QFileDialog.Option()
+        options |= QFileDialog.ShowDirsOnly
+        options |= QFileDialog.HideNameFilterDetails
+        self._start(QFileDialog.getExistingDirectory(caption="Select Folder", options=options))
+
+    def _start(self, path):
+        self.replays = []
+        if path == "":
+            return
+        self.hide_error()
+        self.label.setText("Loading...")
+        Thread(target=self._parse, args=[path]).start()
+
+    def _load_replay(self, path):
+        replay = ReplayPath(path)
+        self.cg.load(replay)
+        self.replays.append(replay)
+
+    def _parse(self, path):
+        if path.endswith(".osr"):
+            self._load_replay(path)
+        else:
+            for i, f in enumerate(os.listdir(path)):
+                self.label.setText("Loading" + ("." * int(i % 4)))
+                if f.endswith(".osr"):
+                    self._load_replay(os.path.join(path, f))
+        if len(self.replays) == 1:
+            self.label.setText(f"{self.replays[0].username}'s replays")
+        else:
+            self.label.setText(f"{len(self.replays)} replays")
+        self._check_replays()
+
+    def _check_replays(self):
+        if len(self.replays) == 0:
+            return self.hide_error()
+        if self.map_id == -1:
+            return self.show_error(["No Map id set"])
+        invalid_replays = [r for r in self.replays if r.map_id != self.map_id]
+        errors = []
+        if len(invalid_replays) == 0:
+            return self.hide_error()
+        elif len(invalid_replays) == 1:
+            errors.append(f"incorrect Map id ({invalid_replays[0].map_id})")
+        else:
+            for r in invalid_replays:
+                errors.append(f"{Path(r.path).name} has incorrect Map id ({r.map_id})")
+        self.show_error(errors)
+
+
+class ReplayAreaWidget(QWidget):
+    map_id_signal = pyqtSignal(int)
+
+    def __init__(self, local_only=False):
+        super().__init__()
+        # add buttons
+        self.map_id = -1
+        self.local_button = QPushButton("Add Local")
+        self.local_button.clicked.connect(self._add_local)
+        if not local_only:
+            self.user_button = QPushButton("Add User")
+            self.user_button.clicked.connect(self._add_user)
+            self.buttons = WidgetCombiner(self.user_button, self.local_button)
+        # replay area
+        self.replay_area = QScrollArea(self)
+        self.replay_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.replay_area.setWidget(ScrollableWidget())
+        self.replay_area.setWidgetResizable(True)
+        # arrays
+        self.extra_replays = []
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        if not local_only:
+            self.layout.addWidget(self.buttons, 0, 0, 1, 1)
+        else:
+            self.layout.addWidget(self.local_button, 0, 0, 1, 1)
+        self.layout.addWidget(self.replay_area, 1, 0, 1, 1)
+        self.layout.setAlignment(Qt.AlignTop)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.setLayout(self.layout)
+
+    def _add_user(self):
+        w = UserWidget()
+        w.delete_button.clicked.connect(partial(self._remove_replay, w))
+        self.replay_area.widget().layout.addWidget(w)
+        self.extra_replays.append(w)
+
+    def _add_local(self):
+        w = LocalWidget(self.map_id)
+        w.delete_button.clicked.connect(partial(self._remove_replay, w))
+        self.replay_area.widget().layout.addWidget(w)
+        self.extra_replays.append(w)
+        self.map_id_signal.connect(w.set_map_id)
+
+    def _remove_replay(self, w):
+        self.replay_area.widget().layout.removeWidget(w)
+        delete_widget(w)
+        self.extra_replays.remove(w)
+
+    def update_map_id(self, map_id):
+        self.map_id = map_id
+        self.map_id_signal.emit(map_id)
+
+
+class Score(QFrame):
+    def __init__(self, score_dict):
+        super().__init__()
+        self.layout = QGridLayout()
+        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setAlignment(Qt.AlignTop)
+        self.setLayout(self.layout)
+        if "error" in score_dict:
+            self.error_label = QLabel(score_dict["error"])
+            self.layout.addWidget(self.error_label, 0, 0, 1, 1)
+            return
+        self.score_dict = score_dict
+        self.score_id = score_dict["score_id"]
+        self.info_label = QLabel(f'{score_dict["beatmap_id"]} [????] ?.??*\n'                                 
+                                 f'{score_dict["maxcombo"]}/????x | {score_dict["rank"]} ({score_to_acc(score_dict)}%)')
+        self.date_label = QLabel(f'Set on {score_dict["date"]}')
+        self.layout.addWidget(self.info_label, 0, 0, 1, 2)
+        self.layout.addWidget(self.date_label, 1, 1, 1, 1, alignment=Qt.AlignRight)
+        Thread(target=self._load).start()
+
+    def _load(self):
+        # TODO each time a users is viewed this function will be called up
+        # TODO to 100 times, this will spam the api!
+        api = ossapi(get_setting("api_key"))
+        score_dict = self.score_dict
+        beatmap = retrying_request(api.get_beatmaps, {"b": score_dict["beatmap_id"], "limit": 1})[0]
+        self.info_label.setText(f'{beatmap["title"]} [{beatmap["version"]}] {round(float(beatmap["difficultyrating"]),2)}*(NM)\n'                                 
+                                f'{score_dict["maxcombo"]}/{beatmap["max_combo"]}x | {score_dict["rank"]} ({score_to_acc(score_dict)}%)'
+                                f' {Mod(int(score_dict["enabled_mods"])).short_name()}')
+
+
+class UserScoresAreaWidget(QWidget):
+    map_id_signal = pyqtSignal(int)
+    _scores_signal = pyqtSignal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.user_id = -1
+        self.score_widgets = []
+        # replay area
+        self.plays_area = QScrollArea(self)
+        self.plays_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plays_area.setWidget(ScrollableWidget())
+        self.plays_area.setWidgetResizable(True)
+
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.plays_area, 1, 0, 1, 1)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.setLayout(self.layout)
+        self._scores_signal.connect(self._reload_entries)
+
+    def _do_web_request(self):
+        self._clear_scores()
+        api = ossapi(get_setting("api_key"))
+        scores = retrying_request(api.get_user_best, {"u": self.user_id, "limit": 100})
+        print(scores)
+        scores = [s for s in scores if bool(int(s["replay_available"]))]
+        self._scores_signal.emit(scores)
+
+    def update_user_id(self, user_id):
+        self.user_id = user_id
+        Thread(target=self._do_web_request).start()
+
+    def _clear_scores(self):
+        for w in self.score_widgets:
+            self.plays_area.widget().layout.removeWidget(w)
+            delete_widget(w)
+        self.score_widgets = []
+
+    def _reload_entries(self, scores):
+        self._clear_scores()
+        if len(scores) == 0:
+            w = QLabel("No replays available to download")
+            self.score_widgets.append(w)
+            self.plays_area.widget().layout.addWidget(w)
+            return
+        for score in scores:
+            w = Score(score)
+            self.score_widgets.append(w)
+            self.plays_area.widget().layout.addWidget(w)
+            pprint(score)

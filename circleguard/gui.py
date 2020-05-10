@@ -1,7 +1,5 @@
 import os
 import sys
-from pathlib import Path
-from multiprocessing.pool import ThreadPool
 from queue import Queue, Empty
 from functools import partial
 import logging
@@ -12,12 +10,11 @@ import threading
 from datetime import datetime
 import math
 import time
-import json
 
-from PyQt5.QtCore import Qt, QTimer, qInstallMessageHandler, QObject, pyqtSignal, QUrl
-from PyQt5.QtWidgets import (QWidget, QFrame, QTabWidget, QTextEdit, QPushButton, QLabel, QScrollArea, QFrame, QProgressBar,
+from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QUrl
+from PyQt5.QtWidgets import (QTabWidget, QTextEdit, QPushButton, QLabel, QScrollArea, QFrame, QProgressBar,
                              QVBoxLayout, QShortcut, QGridLayout, QApplication, QMainWindow, QSizePolicy, QComboBox, QSpacerItem)
-from PyQt5.QtGui import QPalette, QColor, QIcon, QKeySequence, QTextCursor, QPainter, QDesktopServices, QPixmap
+from PyQt5.QtGui import QPalette, QColor, QIcon, QKeySequence, QTextCursor, QDesktopServices
 
 # app needs to be initialized before settings is imported so QStandardPaths resolves
 # corerctly with the applicationName
@@ -25,19 +22,19 @@ app = QApplication([])
 app.setStyle("Fusion")
 app.setApplicationName("Circleguard")
 
-from circleguard import (Circleguard, set_options, Loader, NoInfoAvailableException,
+from circleguard import (Circleguard, Loader, NoInfoAvailableException,
                         ReplayMap, ReplayPath, User, Map, Check, MapUser, StealDetect,
                         RelaxDetect, CorrectionDetect, ReplayStealingResult, RelaxResult, CorrectionResult, Detect)
 from circleguard import __version__ as cg_version
 from circleguard.loadable import Loadable
 
 from utils import resource_path, run_update_check, Run, parse_mod_string, InvalidModException, delete_widget
-from widgets import (set_event_window, InputWidget, ResetSettings, WidgetCombiner,
-                     FolderChooser, IdWidgetCombined, Separator, OptionWidget, ButtonWidget,
-                     LoglevelWidget, SliderBoxSetting, BeatmapTest, ResultW, LineEditSetting,
+from widgets import (set_event_window, ResetSettings, WidgetCombiner,
+                     FolderChooser, Separator, LinkedOptionWidget, ButtonWidget,
+                     LoglevelWidget, SliderBoxSetting, ResultW, LineEditSetting, UserScoresAreaWidget,
                      EntryWidget, RunWidget, ScrollableLoadablesWidget, ScrollableChecksWidget,
                      ReplayMapW, ReplayPathW, MapW, UserW, MapUserW, StealCheckW, RelaxCheckW,
-                     CorrectionCheckW, VisualizerW)
+                     CorrectionCheckW, VisualizerW, InputWidget, CheckSelector, MapSettings, CompareMode, ReplayAreaWidget)
 
 from settings import get_setting, set_setting, overwrite_config, overwrite_with_config_settings, LinkableSetting
 from visualizer import VisualizerWindow
@@ -123,7 +120,7 @@ class WindowWrapper(LinkableSetting, QMainWindow):
         self.setCentralWidget(self.main_window)
         QShortcut(QKeySequence(Qt.CTRL+Qt.Key_Right), self, self.tab_right)
         QShortcut(QKeySequence(Qt.CTRL+Qt.Key_Left), self, self.tab_left)
-        QShortcut(QKeySequence(Qt.CTRL+Qt.Key_Q), self, partial(self.cancel_all_runs, self))
+        QShortcut(QKeySequence(Qt.CTRL+Qt.Key_Q), self, app.quit)
 
         self.setWindowTitle(f"Circleguard v{__version__}")
         self.setWindowIcon(QIcon(str(resource_path("resources/logo.ico"))))
@@ -319,17 +316,19 @@ class DebugWindow(QMainWindow):
     def write(self, message):
         self.terminal.append(message)
 
+
 class MainWindow(QFrame):
     def __init__(self):
         super().__init__()
 
         self.tabs = QTabWidget()
         self.main_tab = MainTab()
+        self.new_tab = NewMainTab()
         self.results_tab = ResultsTab()
         self.queue_tab = QueueTab()
         self.thresholds_tab = ThresholdsTab()
         self.settings_tab = SettingsTab()
-        self.tabs.addTab(self.main_tab, "Main")
+        self.tabs.addTab(self.new_tab, "Main")
         self.tabs.addTab(self.results_tab, "Results")
         self.tabs.addTab(self.queue_tab, "Queue")
         self.tabs.addTab(self.thresholds_tab, "Thresholds")
@@ -340,6 +339,150 @@ class MainWindow(QFrame):
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
         self.layout.setContentsMargins(10, 10, 10, 0)
+        self.setLayout(self.layout)
+
+
+class NewMainTab(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.tabs = QTabWidget()
+        self.map_tab = MapTab()
+        self.user_tab = UserTab()
+        self.local_tab = LocalTab()
+        self.tabs.addTab(self.map_tab, "Map")
+        self.tabs.addTab(self.user_tab, "User")
+        self.tabs.addTab(self.local_tab, "Local Replays")
+
+        terminal = QTextEdit(self)
+        terminal.setFocusPolicy(Qt.ClickFocus)
+        terminal.setReadOnly(True)
+        terminal.ensureCursorVisible()
+        self.terminal = terminal
+
+        self.run_button = QPushButton()
+        self.run_button.setText("Run")
+        self.run_button.setDisabled(True)  # TODO
+        self.run_button.setFixedHeight(20)
+        # self.run_button.clicked.connect(self.add_circleguard_run) TODO
+
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.tabs, 0, 0, 5, 1)
+        self.layout.addWidget(self.terminal, 5, 0, 2, 1)
+        self.layout.addWidget(self.run_button, 7, 0, 1, 1)
+        self.setLayout(self.layout)
+
+
+class MapTab(QFrame):
+    map_id_signal = pyqtSignal(int)
+
+    def __init__(self):
+        super().__init__()
+        spacer = QSpacerItem(25, 0, QSizePolicy.Maximum, QSizePolicy.Minimum)
+        # top input fields
+        self.id_field = InputWidget("Beatmap Id", "TODO", "id", compact=True)
+        self.id_field.setMinimumWidth(200)
+        self.id_field.field.editingFinished.connect(self.emit_new_map_id)
+        self.span_input = InputWidget("Range", "", "normal", compact=True)
+        self.span_input.setMinimumWidth(200)
+        self.span_input.field.setPlaceholderText("1-100")
+        self.mods_input = InputWidget("Mods (opt.)", "", "normal", compact=True)
+        self.mods_input.setMinimumWidth(200)
+        self.mods_input.field.setPlaceholderText("Any")
+        # compare mode
+        self.compare_mode = CompareMode()
+        # checks
+        self.checks = CheckSelector()
+        # extra replays
+        self.replay_area = ReplayAreaWidget()
+        self.map_id_signal.connect(self.replay_area.update_map_id)
+
+        # layout
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.addWidget(self.id_field, 0, 0, 1, 1)
+        self.layout.addItem(spacer, 0, 1, 1, 1)
+        self.layout.addWidget(self.span_input, 0, 2, 1, 1)
+        self.layout.addItem(spacer, 0, 3, 1, 1)
+        self.layout.addWidget(self.mods_input, 0, 4, 1, 1)
+        self.layout.addWidget(self.checks, 1, 0, 1, 5)
+        self.layout.addWidget(self.compare_mode, 2, 0, 1, 5)
+        self.layout.addWidget(Separator("Additional Replays"), 3, 0, 1, 5)
+        self.layout.addWidget(self.replay_area, 4, 0, 1, 5)
+        self.layout.setAlignment(Qt.AlignTop)
+
+        self.setLayout(self.layout)
+
+    def emit_new_map_id(self):
+        text = self.id_field.field.text()
+        if text != "":
+            map_id = int(text)
+        else:
+            map_id = -1
+        self.map_id_signal.emit(map_id)
+
+
+class UserTab(QFrame):
+    user_id_signal = pyqtSignal(int)
+
+    def __init__(self):
+        super().__init__()
+        spacer = QSpacerItem(25, 0, QSizePolicy.Maximum, QSizePolicy.Minimum)
+        # input fields
+        self.id_field = InputWidget("User Id", "TODO", "id", compact=True)
+        self.id_field.setMinimumWidth(200)
+        self.id_field.field.editingFinished.connect(self.emit_new_user_id)
+        self.id_field.field.setText("13506780")  # TODO
+        self.span_input = InputWidget("Range", "", "normal", compact=True)
+        self.span_input.setMinimumWidth(200)
+        self.span_input.field.setPlaceholderText("1-100")
+        self.mods_input = InputWidget("Mods (opt.)", "", "normal", compact=True)
+        self.mods_input.setMinimumWidth(200)
+        self.mods_input.field.setPlaceholderText("Any")
+        # checks
+        self.checks = CheckSelector()
+        # per map settings
+        self.bm_widget = MapSettings()
+        # user plays
+        self.score_area = UserScoresAreaWidget()
+        self.user_id_signal.connect(self.score_area.update_user_id)
+
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.addWidget(self.id_field, 0, 0, 1, 1)
+        self.layout.addItem(spacer, 0, 1, 1, 1)
+        self.layout.addWidget(self.span_input, 0, 2, 1, 1)
+        self.layout.addItem(spacer, 0, 3, 1, 1)
+        self.layout.addWidget(self.mods_input, 0, 4, 1, 1)
+        self.layout.addWidget(self.checks, 1, 0, 1, 5)
+        self.layout.addWidget(self.bm_widget, 2, 0, 1, 1)
+        self.layout.addWidget(self.score_area, 3, 0, 1, 5)
+        self.layout.setAlignment(Qt.AlignTop)
+
+        self.setLayout(self.layout)
+
+    def emit_new_user_id(self):
+        text = self.id_field.field.text()
+        if text != "":
+            user_id = int(text)
+        else:
+            user_id = -1
+        self.user_id_signal.emit(user_id)
+
+
+class LocalTab(QFrame):
+    def __init__(self):
+        super().__init__()
+        # checks
+        self.checks = CheckSelector()
+        # replays
+        self.replay_area = ReplayAreaWidget(local_only=True)
+
+        self.layout = QGridLayout()
+        self.layout.setVerticalSpacing(10)
+        self.layout.addWidget(self.checks, 1, 0, 1, 5)
+        self.layout.addWidget(self.replay_area, 4, 0, 1, 5)
+        self.layout.setAlignment(Qt.AlignTop)
+
         self.setLayout(self.layout)
 
 
@@ -906,7 +1049,7 @@ class VisualizeTab(QFrame):
                 widget = EntryWidget(f"{replay.username}'s play with the id {replay.replay_id}", "Delete", replay)
                 widget.clicked_signal.connect(self.remove_replay)
                 self.replays.append(widget)
-                self.result_frame.results.layout.insertWidget(0,widget)
+                self.result_frame.results.layout.insertWidget(0, widget)
         except Empty:
             pass
 
@@ -975,11 +1118,11 @@ class ScrollableSettingsWidget(QFrame):
         self.wizard = CircleguardWizard()
 
         self.apikey_widget = LineEditSetting("Api Key", "", "password", "api_key")
-        self.darkmode = OptionWidget("Dark mode", "Come join the dark side", "dark_theme")
+        self.darkmode = LinkedOptionWidget("Dark mode", "Come join the dark side", "dark_theme")
         self.darkmode.box.stateChanged.connect(self.reload_theme)
-        self.visualizer_info = OptionWidget("Show Visualizer info", "", "visualizer_info")
-        self.visualizer_beatmap = OptionWidget("Render Hitobjects", "Reopen Visualizer for it to apply", "render_beatmap")
-        self.cache = OptionWidget("Caching", "Downloaded replays will be cached locally", "caching")
+        self.visualizer_info = LinkedOptionWidget("Show Visualizer info", "", "visualizer_info")
+        self.visualizer_beatmap = LinkedOptionWidget("Render Hitobjects", "Reopen Visualizer for it to apply", "render_beatmap")
+        self.cache = LinkedOptionWidget("Caching", "Downloaded replays will be cached locally", "caching")
         self.cache_location = FolderChooser("Cache Location", get_setting("cache_dir"), folder_mode=True)
         self.cache_location.path_signal.connect(partial(set_setting, "cache_dir"))
         self.cache.box.stateChanged.connect(self.cache_location.switch_enabled)
@@ -988,9 +1131,8 @@ class ScrollableSettingsWidget(QFrame):
         self.loglevel.level_combobox.currentIndexChanged.connect(self.set_loglevel)
         self.set_loglevel() # set the default loglevel in cg, not just in gui
 
-        self.rainbow = OptionWidget("Rainbow mode", "This is an experimental function, it may cause unintended behavior!", "rainbow_accent")
+        self.rainbow = LinkedOptionWidget("Rainbow mode", "This is an experimental function, it may cause unintended behavior!", "rainbow_accent")
         self.rainbow.box.stateChanged.connect(self.switch_rainbow)
-
         self.run_wizard = ButtonWidget("Run Wizard", "Run", "")
         self.run_wizard.button.clicked.connect(self.show_wizard)
 
@@ -1014,9 +1156,6 @@ class ScrollableSettingsWidget(QFrame):
         self.layout.addWidget(Separator("Dev"))
         self.layout.addWidget(self.rainbow)
         self.layout.addWidget(self.run_wizard)
-        self.beatmaptest = BeatmapTest()
-        self.beatmaptest.button.clicked.connect(self.visualize)
-        self.layout.addWidget(self.beatmaptest)
         self.setLayout(self.layout)
 
         # we never actually set the theme to dark anywhere
@@ -1049,12 +1188,6 @@ class ScrollableSettingsWidget(QFrame):
 
     def reload_theme(self):
         switch_theme(get_setting("dark_theme"))
-
-    def visualize(self):
-        if self.visualizer_window is not None:
-            self.visualizer_window.close()
-        self.visualizer_window = VisualizerWindow(beatmap_path=self.beatmaptest.file_chooser.path)
-        self.visualizer_window.show()
 
 
 class ResultsTab(QFrame):
@@ -1167,6 +1300,7 @@ class ScrollableThresholdsWidget(QFrame):
         self.layout.setAlignment(Qt.AlignTop)
         self.setLayout(self.layout)
 
+
 def switch_theme(dark, accent=QColor(71, 174, 247)):
     set_setting("dark_theme", dark)
     if dark:
@@ -1208,6 +1342,12 @@ def switch_theme(dark, accent=QColor(71, 174, 247)):
                 LoadableW {
                         border: 1.5px solid #272727;
                 }
+                EntryWidget {
+                        border: 1.5px solid #272727;
+                }
+                Score {
+                        border: 1.5px solid #272727;
+                }
                 CheckW {
                         border: 1.5px solid #272727;
                 }
@@ -1237,6 +1377,12 @@ def switch_theme(dark, accent=QColor(71, 174, 247)):
                 LoadableW {
                     border: 1.5px solid #bfbfbf;
                 }
+                EntryWidget {
+                    border: 1.5px solid #bfbfbf;
+                }
+                Score {
+                    border: 1.5px solid #bfbfbf;
+                }
                 CheckW {
                     border: 1.5px solid #bfbfbf;
                 }
@@ -1256,6 +1402,6 @@ if __name__ == "__main__":
         welcome.show()
         set_setting("ran", True)
 
-    app.lastWindowClosed.connect(WINDOW.cancel_all_runs)
+    app.aboutToQuit.connect(WINDOW.cancel_all_runs)
     app.aboutToQuit.connect(WINDOW.on_application_quit)
     app.exec_()
