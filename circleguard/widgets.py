@@ -15,7 +15,7 @@ from PyQt5.QtGui import QRegExpValidator, QIcon, QDrag
 from PyQt5.QtCore import QRegExp, Qt, QCoreApplication, pyqtSignal, QPoint, QMimeData
 
 from settings import get_setting, reset_defaults, LinkableSetting, set_setting
-from utils import resource_path, delete_widget, score_to_acc, retrying_request
+from utils import resource_path, delete_widget, score_to_acc, retrying_request, cached_beatmap_lookup
 
 SPACER = QSpacerItem(100, 0, QSizePolicy.Maximum, QSizePolicy.Minimum)
 
@@ -1331,10 +1331,12 @@ class Score(QFrame):
         # TODO to 100 times, this will spam the api!
         api = ossapi(get_setting("api_key"))
         score_dict = self.score_dict
-        beatmap = retrying_request(api.get_beatmaps, {"b": score_dict["beatmap_id"], "limit": 1})[0]
-        self.info_label.setText(f'{beatmap["title"]} [{beatmap["version"]}] {round(float(beatmap["difficultyrating"]),2)}*(NM)\n'                                 
-                                f'{score_dict["maxcombo"]}/{beatmap["max_combo"]}x | {score_dict["rank"]} ({score_to_acc(score_dict)}%)'
-                                f' {Mod(int(score_dict["enabled_mods"])).short_name()}')
+        beatmap = cached_beatmap_lookup(score_dict["beatmap_id"])
+        self.info_label.setText(
+            f'{beatmap["filename"][:-4]} ({round(float(beatmap["difficultyrating"]),2)}* NM)\n'                                 
+            f'{score_dict["rank"]} | {score_to_acc(score_dict)}% | '
+            f'{Mod(int(score_dict["enabled_mods"])).short_name()} | '
+            f'{score_dict["maxcombo"]}x | {round(float(score_dict["pp"]),2)}pp ')
 
 
 class UserScoresAreaWidget(QWidget):

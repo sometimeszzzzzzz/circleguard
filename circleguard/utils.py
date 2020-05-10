@@ -1,11 +1,15 @@
 from pathlib import Path
 import sys
 import os
+import bz2
 import logging
 import time
+import sqlite3
 from datetime import datetime, timedelta
+from threading import Thread
 
 from circleguard import Mod
+from ossapi import ossapi
 from packaging import version
 import requests
 from requests import RequestException
@@ -143,10 +147,10 @@ def score_to_acc(score_dict):
     return round(accuracy, 2)
 
 
-def retrying_request(func, params, max_retries=5, cooldown=5):
+def retrying_request(func, *args, max_retries=5, cooldown=5):
     for i in range(max_retries):
         try:
-            response = func(params)
+            response = func(*args)
             logging.error("Request %s succeeded (Attempt #%s)", func.__name__, i+1)
             return response
         except requests.exceptions.ConnectionError:
@@ -154,3 +158,94 @@ def retrying_request(func, params, max_retries=5, cooldown=5):
             time.sleep(cooldown)
     return {"error": "Api not available"}
 
+
+def _download_beatmap_cache():
+    cache_file = os.path.join(get_setting("cache_dir"), "online.db")
+    if os.path.exists(cache_file):
+        return
+    logging.info("Beatmap cache not found, downloading it")
+    url = 'https://assets.ppy.sh/client-resources/online.db.bz2'
+    r = requests.get(url).content
+    decompressed = bz2.decompress(r)
+    with open(cache_file + ".tmp", 'wb') as f:
+        f.write(decompressed)
+    # atomic file saving to be safe
+    os.rename(cache_file + ".tmp", cache_file)
+    logging.info("Beatmap cache downloaded")
+
+
+def _convert_api_to_db_dict(api_dict, columns):
+    merge_dict = {"user_id": api_dict["creator_id"],
+                  "checksum": api_dict["file_md5"],
+                  "countTotal":
+                      int(api_dict["count_normal"])
+                      + 2 * int(api_dict["count_slider"])
+                      + 3 * int(api_dict["count_spinner"]),
+                  "countNormal": api_dict["count_normal"],
+                  "countSlider": api_dict["count_slider"],
+                  "countSpinner": api_dict["count_spinner"],
+                  "playmode": api_dict["mode"],
+                  "filename":
+                      api_dict["artist"]
+                      + " - "
+                      + api_dict["title"]
+                      + " ("
+                      + api_dict["creator"]
+                      + ") ["
+                      + api_dict["version"]
+                      + "].osu"
+                  }
+    merge_dict.update(api_dict)
+    return merge_dict
+
+
+def cached_beatmap_lookup(beatmap_id):
+    api = ossapi(get_setting("api_key"))
+    cache_file = os.path.join(get_setting("cache_dir"), "online.db")
+
+    if not os.path.exists(cache_file):
+        logging.info("No Beatmap cache found, doing request")
+        bm = retrying_request(api.get_beatmaps,
+                              {"b": beatmap_id, "limit": 1})
+        if "error" in bm or len(bm) == 0:
+            return bm
+        return bm[0]
+
+    db = sqlite3.connect(cache_file)
+
+    # get columns from db
+    column_query = db.execute("SELECT c.name "
+                              "FROM pragma_table_info('osu_beatmaps') c;")
+    columns = column_query.fetchall()
+    columns = [c[0] for c in columns]
+
+    bm_query = db.execute("SELECT * FROM osu_beatmaps WHERE beatmap_id == ?",
+                          (beatmap_id,))
+    bm = bm_query.fetchone()
+
+    if bm is None:
+        logging.info("Beatmap isn't cached, doing request")
+        bm = retrying_request(api.get_beatmaps,
+                              {"b": beatmap_id, "limit": 1})
+        if "error" in bm or len(bm) == 0:
+            return bm
+        bm = _convert_api_to_db_dict(bm[0], columns)
+
+        # filter unused keys
+        data = {key: bm[key] for key in columns if key in bm.keys()}
+
+        keys = ','.join(data.keys())
+        question_marks = ','.join(list('?'*len(data)))
+        values = tuple(data.values())
+
+        db.execute("INSERT INTO osu_beatmaps ("+keys+")  VALUES ("
+                   + question_marks + ")", values)
+        db.commit()
+        return data
+
+    return {d[0]: d[1] for d in zip(columns, bm)}
+
+
+# download db asap
+Thread(target=_download_beatmap_cache).start()
+print(cached_beatmap_lookup(221777))

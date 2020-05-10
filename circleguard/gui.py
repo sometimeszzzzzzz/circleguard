@@ -145,8 +145,7 @@ class WindowWrapper(LinkableSetting, QMainWindow):
         logging.getLogger(__name__).addHandler(self.file_handler)
         self.on_setting_changed(get_setting("log_save")) # manually disable logging if it wasn't checked when we started
 
-        self.thread = threading.Thread(target=self._change_label_update)
-        self.thread.start()
+        threading.Thread(target=self._change_label_update).start()
 
     def on_setting_changed(self, new_value):
         log_save = new_value
